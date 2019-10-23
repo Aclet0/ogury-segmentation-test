@@ -130,11 +130,12 @@ object SegmentationJob {
       .withColumn(
       "activitySegment",
         getActivitySegmentUdf(col("t_dates"), lit(startDate), lit(endDate))
-    )
-
-    joined_transaction_per_cust_df = joined_transaction_per_cust_df.select(
-      col("customerId"),
-      col("activitySegment"))
+      )
+      .select(
+        col("customerId"),
+        col("activitySegment")
+      )
+    
 
     return joined_transaction_per_cust_df
   }
