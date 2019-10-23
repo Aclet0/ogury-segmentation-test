@@ -30,6 +30,7 @@ object SegmentationJob {
     session.stop()
   }
 
+
   def run(session: SparkSession, dataPath: String, outputFile: String, endDate: LocalDate, segmentationPeriod: Int): Unit = {
     // load
     val transactions = loadTransactions(session, dataPath)
@@ -56,6 +57,7 @@ object SegmentationJob {
     return transactionDF.as[Transaction]
   }
 
+
   private def loadCustomers(session: SparkSession, dataPath: String): Dataset[String] = {
     import session.implicits._
 
@@ -67,7 +69,6 @@ object SegmentationJob {
 
     return customerDF.as[String]
   }
-
 
 
   private def getActivitySegment(transaction_dates: Seq[Date], startDate:Date, endDate: Date): String = {
@@ -116,7 +117,6 @@ object SegmentationJob {
         col("collect_list(date)").alias("t_dates")
       )
 
-
     var joined_transaction_per_cust_df = customers
       .join(
         transactions_per_cust_df,
@@ -125,7 +125,6 @@ object SegmentationJob {
     )
 
     val getActivitySegmentUdf = udf[String, Seq[Date], Date, Date](getActivitySegment)
-
     joined_transaction_per_cust_df = joined_transaction_per_cust_df
       .withColumn(
       "activitySegment",
@@ -135,11 +134,9 @@ object SegmentationJob {
         col("customerId"),
         col("activitySegment")
       )
-    
 
     return joined_transaction_per_cust_df
   }
-
 
 
   private def saveSegmentation(segmentation: DataFrame, outputFile: String): Unit = {
@@ -148,13 +145,13 @@ object SegmentationJob {
       .format("csv")
       .mode("overwrite")
       .option("sep", ";")
+      .option("header", true)
       .save(outputFile)
   }
+
 
   private def createSparkSession(): SparkSession = {
     SparkSession.builder().config("spark.master", "local[2]").getOrCreate()
   }
-
-
 
 }
