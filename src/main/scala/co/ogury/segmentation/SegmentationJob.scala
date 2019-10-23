@@ -41,7 +41,6 @@ object SegmentationJob {
 
     // save
     saveSegmentation(computed_df, outputFile)
-    //???
   }
 
 
@@ -72,53 +71,39 @@ object SegmentationJob {
 
 
   private def getActivitySegment(transaction_dates: Seq[Date], startDate:Date, endDate: Date): String = {
-//  private def getActivitySegment(transaction_dates: Seq[Date]): String = {
-    //println(transaction_dates)
     if(transaction_dates != null){
 
       val sorted_dates = transaction_dates.sortBy(_.getTime)
-
-      //val after_end_date= get_after_dates()
-      var has_undef_trans : Boolean = false
+//      var has_undef_trans : Boolean = false
       var has_inac_trans: Boolean = false
       var has_active_trans: Boolean = false
       breakable{
         for (date <- sorted_dates){
-          println(date.toString)
           if(date.after(endDate)){
-            println("after")
-
-            has_inac_trans = true
+            println("break")
+//            has_undef_trans = true
             break
-            //break the loop
+
           } else if(date.before(startDate)){
-            println("before")
+//            println("before")
             has_inac_trans = true
           }
           else {
             has_active_trans = true
             if(has_inac_trans){
-              return "HAS_ACTIVE TRANS"
+              return ActivitySegment.ACTIVE.toString
             }
-            return "NEW"
-
+            return ActivitySegment.NEW.toString
           }
         }
       }
-      println("outside loop")
       if (has_inac_trans){
-        println("inactive")
-        return "INACTIVE"
+//        println("inactive")
+        return ActivitySegment.INACTIVE.toString
       }
-
     }
-    return "UNDEF"
-
-    //return ActivitySegment.UNDEFINED
-//    return "ActivitySegment.UNDEFINED"
+    return ActivitySegment.UNDEFINED.toString
   }
-
-
 
 
   def computeSegmentation(customers: Dataset[String], transactions: Dataset[Transaction],
@@ -126,6 +111,7 @@ object SegmentationJob {
 //    val studied_transactions = transactions
     val studied_transactions = transactions.filter(col("date") <= lit(endDate) )
 
+    studied_transactions.show()
     val transactions_per_cust_df = studied_transactions.groupBy("customerId")
       .agg(collect_list("date"))
       .select(col("customerId").alias("t_customerId"), col("collect_list(date)").alias("t_dates"))
@@ -140,21 +126,26 @@ object SegmentationJob {
 //    val getActivitySegmentUdf = udf[String, Seq[Date]](getActivitySegment)
     val getActivitySegmentUdf = udf[String, Seq[Date], Date, Date](getActivitySegment)
 
-
-    joined_transaction_per_cust_df = joined_transaction_per_cust_df.filter("t_dates is not null")
+    joined_transaction_per_cust_df.show()
+    //joined_transaction_per_cust_df = joined_transaction_per_cust_df.filter("t_dates is not null")
     joined_transaction_per_cust_df = joined_transaction_per_cust_df.withColumn(
 //      "activitySegment", getActivitySegmentUdf(col("t_dates"))
       "activitySegment", getActivitySegmentUdf(col("t_dates"), lit(startDate), lit(endDate))
     )
 
-    println(" after join")
-    joined_transaction_per_cust_df.show(false)
+
+    joined_transaction_per_cust_df = joined_transaction_per_cust_df.select(
+      col("customerId"),
+      col("activitySegment"))
+
+//    println(" after join")
+//    joined_transaction_per_cust_df.show(false)
     joined_transaction_per_cust_df.printSchema()
-    println(joined_transaction_per_cust_df.count())
-    println("cust")
-    println(customers.count())
+//    println(joined_transaction_per_cust_df.count())
+//    println("cust")
+//    println(customers.count())
 
-
+    //joined_transaction_per_cust_df.collect().foreach(println(_))
 
     return joined_transaction_per_cust_df
   }
