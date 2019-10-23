@@ -16,16 +16,16 @@ object SegmentationJob {
 
   def main(args: Array[String]): Unit = {
 
-    val dataPath = "data" // = args(0)
-    val outputFile = "output/"//args(1)
-    val endDate = "2019-10-23"//args(2)
-    val segmentationPeriod = 4 //args(3)
+    val dataPath = args(0)
+    val outputFile = args(1)
+    val endDate = args(2)
+    val segmentationPeriod = args(3).toInt
 
     val session = createSparkSession()
 
     run(session, dataPath, outputFile, LocalDate.parse(endDate), segmentationPeriod.toInt)
 
-    val idUdf = udf { Random.alphanumeric.take(7).map(_.toLower).mkString }
+    //val idUdf = udf { Random.alphanumeric.take(7).map(_.toLower).mkString }
 
     session.stop()
   }
@@ -51,9 +51,9 @@ object SegmentationJob {
       .format("csv")
       .option("header", true)
       .option("inferSchema", true)
-      .load(dataPath + "/transactions/transactions.csv")
-    val transactions = transactionDF.as[Transaction]
-    return transactions
+      .load(dataPath + "transactions/transactions.csv")
+
+    return transactionDF.as[Transaction]
   }
 
   private def loadCustomers(session: SparkSession, dataPath: String): Dataset[String] = {
@@ -63,42 +63,39 @@ object SegmentationJob {
       .format("csv")
       .option("header", true)
       .option("inferSchema", true)
-      .load(dataPath + "/customers/customerIds.csv")
-    val customers = customerDF.as[String]
-    return customers
+      .load(dataPath + "customers/customerIds.csv")
+
+    return customerDF.as[String]
   }
 
 
 
   private def getActivitySegment(transaction_dates: Seq[Date], startDate:Date, endDate: Date): String = {
     if(transaction_dates != null){
-
+      // important to sort date before iterating on it
       val sorted_dates = transaction_dates.sortBy(_.getTime)
-//      var has_undef_trans : Boolean = false
-      var has_inac_trans: Boolean = false
-      var has_active_trans: Boolean = false
+      var has_before_start_date_trans: Boolean = false
+      var has_during_period_trans: Boolean = false
       breakable{
         for (date <- sorted_dates){
-          if(date.after(endDate)){
-            println("break")
-//            has_undef_trans = true
-            break
 
+          if(date.after(endDate)){
+            // no need continuing iterating because next date will also be after endDate
+            break
           } else if(date.before(startDate)){
-//            println("before")
-            has_inac_trans = true
+            has_before_start_date_trans = true
           }
           else {
-            has_active_trans = true
-            if(has_inac_trans){
+            // transaction date is in studied period
+            has_during_period_trans = true
+            if(has_before_start_date_trans){
               return ActivitySegment.ACTIVE.toString
             }
             return ActivitySegment.NEW.toString
           }
         }
       }
-      if (has_inac_trans){
-//        println("inactive")
+      if (has_before_start_date_trans){
         return ActivitySegment.INACTIVE.toString
       }
     }
@@ -108,68 +105,53 @@ object SegmentationJob {
 
   def computeSegmentation(customers: Dataset[String], transactions: Dataset[Transaction],
                           startDate: Date, endDate: Date): DataFrame = {
-//    val studied_transactions = transactions
+
     val studied_transactions = transactions.filter(col("date") <= lit(endDate) )
 
-    studied_transactions.show()
-    val transactions_per_cust_df = studied_transactions.groupBy("customerId")
+    val transactions_per_cust_df = studied_transactions
+      .groupBy("customerId")
       .agg(collect_list("date"))
-      .select(col("customerId").alias("t_customerId"), col("collect_list(date)").alias("t_dates"))
+      .select(
+        col("customerId").alias("t_customerId"),
+        col("collect_list(date)").alias("t_dates")
+      )
 
 
-    var joined_transaction_per_cust_df = customers.join(transactions_per_cust_df,
-        customers.col("customerId") === transactions_per_cust_df.col("t_customerId"), "left_outer"
+    var joined_transaction_per_cust_df = customers
+      .join(
+        transactions_per_cust_df,
+        customers.col("customerId") === transactions_per_cust_df.col("t_customerId"),
+        "left_outer"
     )
 
-
-
-//    val getActivitySegmentUdf = udf[String, Seq[Date]](getActivitySegment)
     val getActivitySegmentUdf = udf[String, Seq[Date], Date, Date](getActivitySegment)
 
-    joined_transaction_per_cust_df.show()
-    //joined_transaction_per_cust_df = joined_transaction_per_cust_df.filter("t_dates is not null")
-    joined_transaction_per_cust_df = joined_transaction_per_cust_df.withColumn(
-//      "activitySegment", getActivitySegmentUdf(col("t_dates"))
-      "activitySegment", getActivitySegmentUdf(col("t_dates"), lit(startDate), lit(endDate))
+    joined_transaction_per_cust_df = joined_transaction_per_cust_df
+      .withColumn(
+      "activitySegment",
+        getActivitySegmentUdf(col("t_dates"), lit(startDate), lit(endDate))
     )
-
 
     joined_transaction_per_cust_df = joined_transaction_per_cust_df.select(
       col("customerId"),
       col("activitySegment"))
-
-//    println(" after join")
-//    joined_transaction_per_cust_df.show(false)
-    joined_transaction_per_cust_df.printSchema()
-//    println(joined_transaction_per_cust_df.count())
-//    println("cust")
-//    println(customers.count())
-
-    //joined_transaction_per_cust_df.collect().foreach(println(_))
 
     return joined_transaction_per_cust_df
   }
 
 
 
-
-
-
-
   private def saveSegmentation(segmentation: DataFrame, outputFile: String): Unit = {
-    segmentation.select(col("customerId"), col("activitySegment")).show(false)
-    segmentation.select(col("customerId"), col("activitySegment")).write
+    segmentation.select(col("customerId"), col("activitySegment"))
+      .write
       .format("csv")
       .mode("overwrite")
-      .option("sep", ";").save("output")
-    return
+      .option("sep", ";")
+      .save(outputFile)
   }
 
   private def createSparkSession(): SparkSession = {
-    val spark = SparkSession.builder().config("spark.master", "local[2]").getOrCreate()
-
-
-    return spark
+    SparkSession.builder().config("spark.master", "local[2]").getOrCreate()
   }
 
 
